@@ -2,8 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import Database from 'better-sqlite3';
 import session from 'express-session';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
@@ -12,7 +11,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 async function startServer() {
   const app = express();
@@ -22,12 +21,10 @@ async function startServer() {
   });
 
   // 1. Database Setup
-  const db = await open({
-    filename: './database.sqlite',
-    driver: sqlite3.Database
-  });
+  const db = new Database('./database.sqlite');
+  db.pragma('journal_mode = WAL');
 
-  await db.exec(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       google_id TEXT UNIQUE,
@@ -70,7 +67,7 @@ async function startServer() {
   `);
 
   // Initialize some default companies if empty
-  const companyCount = await db.get('SELECT COUNT(*) as count FROM companies');
+  const companyCount = db.prepare('SELECT COUNT(*) as count FROM companies').get() as { count: number };
   if (companyCount.count === 0) {
     const initialCompanies = [
       { id: '1', name: 'TechNova', category: 'Tech', desc: 'Leading AI and robotics company.', price: 150.5, shares: 1000000 },
@@ -78,31 +75,32 @@ async function startServer() {
       { id: '3', name: 'GameSphere', category: 'Gaming', desc: 'Next-gen console manufacturer.', price: 89.9, shares: 2000000 }
     ];
 
-    for (const c of initialCompanies) {
-      await db.run(
-        'INSERT INTO companies (id, name, category, description, price, total_shares, trend) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [c.id, c.name, c.category, c.desc, c.price, c.shares, (Math.random() - 0.5) * 0.5]
-      );
-      
-      // Generate initial history
-      let currentPrice = c.price;
-      const now = Math.floor(Date.now() / 1000);
-      for (let i = 60; i >= 0; i--) {
-        const time = now - i * 60;
-        const volatility = currentPrice * 0.02;
-        const change = (Math.random() - 0.5) * volatility;
-        const open = currentPrice;
-        const close = currentPrice + change;
-        const high = Math.max(open, close) + Math.random() * volatility * 0.5;
-        const low = Math.min(open, close) - Math.random() * volatility * 0.5;
+    const insertCompany = db.prepare('INSERT INTO companies (id, name, category, description, price, total_shares, trend) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const insertHistory = db.prepare('INSERT INTO history (company_id, time, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)');
+
+    const insertInitialData = db.transaction(() => {
+      for (const c of initialCompanies) {
+        insertCompany.run(c.id, c.name, c.category, c.desc, c.price, c.shares, (Math.random() - 0.5) * 0.5);
         
-        await db.run(
-          'INSERT INTO history (company_id, time, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)',
-          [c.id, time, open, high, low, close]
-        );
-        currentPrice = close;
+        // Generate initial history
+        let currentPrice = c.price;
+        const now = Math.floor(Date.now() / 1000);
+        for (let i = 60; i >= 0; i--) {
+          const time = now - i * 60;
+          const volatility = currentPrice * 0.02;
+          const change = (Math.random() - 0.5) * volatility;
+          const open = currentPrice;
+          const close = currentPrice + change;
+          const high = Math.max(open, close) + Math.random() * volatility * 0.5;
+          const low = Math.min(open, close) - Math.random() * volatility * 0.5;
+          
+          insertHistory.run(c.id, time, open, high, low, close);
+          currentPrice = close;
+        }
       }
-    }
+    });
+    
+    insertInitialData();
   }
 
   // 2. Session & Passport Setup
@@ -120,9 +118,9 @@ async function startServer() {
     done(null, user.id);
   });
 
-  passport.deserializeUser(async (id: string, done) => {
+  passport.deserializeUser((id: string, done) => {
     try {
-      const user = await db.get('SELECT * FROM users WHERE id = ?', [id]);
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
       done(null, user);
     } catch (err) {
       done(err, null);
@@ -134,16 +132,13 @@ async function startServer() {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: `${process.env.APP_URL}/auth/google/callback`
-    }, async (accessToken, refreshToken, profile, done) => {
+    }, (accessToken, refreshToken, profile, done) => {
       try {
-        let user = await db.get('SELECT * FROM users WHERE google_id = ?', [profile.id]);
+        let user = db.prepare('SELECT * FROM users WHERE google_id = ?').get(profile.id);
         if (!user) {
           const newId = Math.random().toString(36).substr(2, 9);
-          await db.run(
-            'INSERT INTO users (id, google_id, username) VALUES (?, ?, ?)',
-            [newId, profile.id, profile.displayName]
-          );
-          user = await db.get('SELECT * FROM users WHERE id = ?', [newId]);
+          db.prepare('INSERT INTO users (id, google_id, username) VALUES (?, ?, ?)').run(newId, profile.id, profile.displayName);
+          user = db.prepare('SELECT * FROM users WHERE id = ?').get(newId);
         }
         return done(null, user);
       } catch (err) {
@@ -178,9 +173,9 @@ async function startServer() {
     }
   });
 
-  app.get('/api/leaderboard', async (req, res) => {
+  app.get('/api/leaderboard', (req, res) => {
     try {
-      const topUsers = await db.all('SELECT username, net_worth FROM users ORDER BY net_worth DESC LIMIT 50');
+      const topUsers = db.prepare('SELECT username, net_worth FROM users ORDER BY net_worth DESC LIMIT 50').all();
       res.json({ users: topUsers });
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch leaderboard' });
@@ -188,12 +183,12 @@ async function startServer() {
   });
 
   // 4. Socket.io Game Logic
-  io.on('connection', async (socket) => {
+  io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
     // Send initial state
-    const companies = await db.all('SELECT * FROM companies');
-    const historyData = await db.all('SELECT * FROM history ORDER BY time ASC');
+    const companies = db.prepare('SELECT * FROM companies').all() as any[];
+    const historyData = db.prepare('SELECT * FROM history ORDER BY time ASC').all() as any[];
     
     const formattedCompanies: Record<string, any> = {};
     for (const c of companies) {
@@ -205,159 +200,172 @@ async function startServer() {
     
     socket.emit('initialState', { companies: formattedCompanies });
 
-    socket.on('buyStock', async ({ userId, companyId, amount }) => {
-      // Basic transaction logic
-      const user = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
-      const company = await db.get('SELECT * FROM companies WHERE id = ?', [companyId]);
+    socket.on('buyStock', ({ userId, companyId, amount }) => {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+      const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
       
       if (!user || !company) return;
       
       const cost = company.price * amount;
       if (user.balance >= cost) {
-        const portfolio = await db.get('SELECT * FROM portfolio WHERE user_id = ? AND company_id = ?', [userId, companyId]);
+        const portfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ? AND company_id = ?').get(userId, companyId) as any;
         
-        await db.run('BEGIN TRANSACTION');
-        try {
-          await db.run('UPDATE users SET balance = balance - ? WHERE id = ?', [cost, userId]);
+        const transaction = db.transaction(() => {
+          db.prepare('UPDATE users SET balance = balance - ? WHERE id = ?').run(cost, userId);
           
           if (portfolio) {
             const newShares = portfolio.shares + amount;
             const newAvgPrice = ((portfolio.shares * portfolio.average_price) + cost) / newShares;
-            await db.run('UPDATE portfolio SET shares = ?, average_price = ? WHERE user_id = ? AND company_id = ?', 
-              [newShares, newAvgPrice, userId, companyId]);
+            db.prepare('UPDATE portfolio SET shares = ?, average_price = ? WHERE user_id = ? AND company_id = ?')
+              .run(newShares, newAvgPrice, userId, companyId);
           } else {
-            await db.run('INSERT INTO portfolio (user_id, company_id, shares, average_price) VALUES (?, ?, ?, ?)',
-              [userId, companyId, amount, company.price]);
+            db.prepare('INSERT INTO portfolio (user_id, company_id, shares, average_price) VALUES (?, ?, ?, ?)')
+              .run(userId, companyId, amount, company.price);
           }
-          await db.run('COMMIT');
-          
-          const updatedUser = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
-          const updatedPortfolio = await db.all('SELECT * FROM portfolio WHERE user_id = ?', [userId]);
+        });
+
+        try {
+          transaction();
+          const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+          const updatedPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?').all(userId);
           socket.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio });
         } catch (e) {
-          await db.run('ROLLBACK');
+          console.error('Buy transaction failed', e);
         }
       }
     });
 
-    socket.on('sellStock', async ({ userId, companyId, amount }) => {
-      const user = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
-      const company = await db.get('SELECT * FROM companies WHERE id = ?', [companyId]);
-      const portfolio = await db.get('SELECT * FROM portfolio WHERE user_id = ? AND company_id = ?', [userId, companyId]);
+    socket.on('sellStock', ({ userId, companyId, amount }) => {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+      const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
+      const portfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ? AND company_id = ?').get(userId, companyId) as any;
       
       if (!user || !company || !portfolio || portfolio.shares < amount) return;
       
       const revenue = company.price * amount;
       
-      await db.run('BEGIN TRANSACTION');
-      try {
-        await db.run('UPDATE users SET balance = balance + ? WHERE id = ?', [revenue, userId]);
+      const transaction = db.transaction(() => {
+        db.prepare('UPDATE users SET balance = balance + ? WHERE id = ?').run(revenue, userId);
         
         const newShares = portfolio.shares - amount;
         if (newShares === 0) {
-          await db.run('DELETE FROM portfolio WHERE user_id = ? AND company_id = ?', [userId, companyId]);
+          db.prepare('DELETE FROM portfolio WHERE user_id = ? AND company_id = ?').run(userId, companyId);
         } else {
-          await db.run('UPDATE portfolio SET shares = ? WHERE user_id = ? AND company_id = ?', [newShares, userId, companyId]);
+          db.prepare('UPDATE portfolio SET shares = ? WHERE user_id = ? AND company_id = ?').run(newShares, userId, companyId);
         }
-        await db.run('COMMIT');
-        
-        const updatedUser = await db.get('SELECT * FROM users WHERE id = ?', [userId]);
-        const updatedPortfolio = await db.all('SELECT * FROM portfolio WHERE user_id = ?', [userId]);
+      });
+
+      try {
+        transaction();
+        const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+        const updatedPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?').all(userId);
         socket.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio });
       } catch (e) {
-        await db.run('ROLLBACK');
+        console.error('Sell transaction failed', e);
       }
     });
 
-    socket.on('createCompany', async ({ ownerId, name, category, description, price, totalShares }) => {
+    socket.on('createCompany', ({ ownerId, name, category, description, price, totalShares }) => {
       const id = Math.random().toString(36).substr(2, 9);
       const trend = (Math.random() - 0.5) * 0.5;
-      
-      await db.run(
-        'INSERT INTO companies (id, owner_id, name, category, description, price, total_shares, trend) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, ownerId, name, category, description, price, totalShares, trend]
-      );
-      
       const now = Math.floor(Date.now() / 1000);
-      await db.run(
-        'INSERT INTO history (company_id, time, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)',
-        [id, now, price, price, price, price]
-      );
-
-      const newCompany = await db.get('SELECT * FROM companies WHERE id = ?', [id]);
-      const history = await db.all('SELECT * FROM history WHERE company_id = ?', [id]);
       
-      io.emit('companyCreated', { ...newCompany, history });
+      const transaction = db.transaction(() => {
+        db.prepare(
+          'INSERT INTO companies (id, owner_id, name, category, description, price, total_shares, trend) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, ownerId, name, category, description, price, totalShares, trend);
+        
+        db.prepare(
+          'INSERT INTO history (company_id, time, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(id, now, price, price, price, price);
+      });
+
+      try {
+        transaction();
+        const newCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(id);
+        const history = db.prepare('SELECT * FROM history WHERE company_id = ?').all(id);
+        io.emit('companyCreated', { ...newCompany, history });
+      } catch (e) {
+        console.error('Create company failed', e);
+      }
     });
   });
 
   // Game Loop (Server-side)
-  setInterval(async () => {
-    const companies = await db.all('SELECT * FROM companies');
+  setInterval(() => {
+    const companies = db.prepare('SELECT * FROM companies').all() as any[];
     const now = Math.floor(Date.now() / 1000);
     const updates = [];
 
-    for (const company of companies) {
-      const volatility = company.price * 0.015;
-      const trendEffect = company.trend * volatility * 0.5;
-      const randomEffect = (Math.random() - 0.5) * volatility;
-      
-      let newPrice = company.price + trendEffect + randomEffect;
-      if (newPrice < 0.01) newPrice = 0.01;
+    const updateCompany = db.prepare('UPDATE companies SET price = ?, trend = ? WHERE id = ?');
+    const insertHistory = db.prepare('INSERT INTO history (company_id, time, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)');
+    const updateHistory = db.prepare('UPDATE history SET high = ?, low = ?, close = ? WHERE company_id = ? AND time = ?');
+    const getLastCandle = db.prepare('SELECT * FROM history WHERE company_id = ? ORDER BY time DESC LIMIT 1');
 
-      let newTrend = company.trend + (Math.random() - 0.5) * 0.1;
-      if (newTrend > 1) newTrend = 1;
-      if (newTrend < -1) newTrend = -1;
+    const tickTransaction = db.transaction(() => {
+      for (const company of companies) {
+        const volatility = company.price * 0.015;
+        const trendEffect = company.trend * volatility * 0.5;
+        const randomEffect = (Math.random() - 0.5) * volatility;
+        
+        let newPrice = company.price + trendEffect + randomEffect;
+        if (newPrice < 0.01) newPrice = 0.01;
 
-      await db.run('UPDATE companies SET price = ?, trend = ? WHERE id = ?', [newPrice, newTrend, company.id]);
+        let newTrend = company.trend + (Math.random() - 0.5) * 0.1;
+        if (newTrend > 1) newTrend = 1;
+        if (newTrend < -1) newTrend = -1;
 
-      // Handle history
-      const lastCandle = await db.get('SELECT * FROM history WHERE company_id = ? ORDER BY time DESC LIMIT 1', [company.id]);
-      
-      let candleUpdate;
-      if (!lastCandle || now - lastCandle.time >= 60) {
-        // New candle
-        await db.run(
-          'INSERT INTO history (company_id, time, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)',
-          [company.id, now, company.price, Math.max(company.price, newPrice), Math.min(company.price, newPrice), newPrice]
-        );
-        candleUpdate = { time: now, open: company.price, high: Math.max(company.price, newPrice), low: Math.min(company.price, newPrice), close: newPrice };
-      } else {
-        // Update current candle
-        const high = Math.max(lastCandle.high, newPrice);
-        const low = Math.min(lastCandle.low, newPrice);
-        await db.run(
-          'UPDATE history SET high = ?, low = ?, close = ? WHERE company_id = ? AND time = ?',
-          [high, low, newPrice, company.id, lastCandle.time]
-        );
-        candleUpdate = { time: lastCandle.time, open: lastCandle.open, high, low, close: newPrice };
-      }
+        updateCompany.run(newPrice, newTrend, company.id);
 
-      updates.push({
-        id: company.id,
-        price: newPrice,
-        trend: newTrend,
-        candle: candleUpdate
-      });
-    }
-
-    // Broadcast market update
-    io.emit('marketTick', updates);
-
-    // Update net worth for all users
-    const users = await db.all('SELECT * FROM users');
-    for (const user of users) {
-      const portfolio = await db.all('SELECT * FROM portfolio WHERE user_id = ?', [user.id]);
-      let totalPortfolioValue = 0;
-      for (const item of portfolio) {
-        const comp = updates.find(u => u.id === item.company_id);
-        if (comp) {
-          totalPortfolioValue += item.shares * comp.price;
+        // Handle history
+        const lastCandle = getLastCandle.get(company.id) as any;
+        
+        let candleUpdate;
+        if (!lastCandle || now - lastCandle.time >= 60) {
+          // New candle
+          insertHistory.run(company.id, now, company.price, Math.max(company.price, newPrice), Math.min(company.price, newPrice), newPrice);
+          candleUpdate = { time: now, open: company.price, high: Math.max(company.price, newPrice), low: Math.min(company.price, newPrice), close: newPrice };
+        } else {
+          // Update current candle
+          const high = Math.max(lastCandle.high, newPrice);
+          const low = Math.min(lastCandle.low, newPrice);
+          updateHistory.run(high, low, newPrice, company.id, lastCandle.time);
+          candleUpdate = { time: lastCandle.time, open: lastCandle.open, high, low, close: newPrice };
         }
-      }
-      await db.run('UPDATE users SET net_worth = ? WHERE id = ?', [user.balance + totalPortfolioValue, user.id]);
-    }
 
+        updates.push({
+          id: company.id,
+          price: newPrice,
+          trend: newTrend,
+          candle: candleUpdate
+        });
+      }
+
+      // Update net worth for all users
+      const users = db.prepare('SELECT * FROM users').all() as any[];
+      const getPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?');
+      const updateUserNetWorth = db.prepare('UPDATE users SET net_worth = ? WHERE id = ?');
+
+      for (const user of users) {
+        const portfolio = getPortfolio.all(user.id) as any[];
+        let totalPortfolioValue = 0;
+        for (const item of portfolio) {
+          const comp = updates.find(u => u.id === item.company_id);
+          if (comp) {
+            totalPortfolioValue += item.shares * comp.price;
+          }
+        }
+        updateUserNetWorth.run(user.balance + totalPortfolioValue, user.id);
+      }
+    });
+
+    try {
+      tickTransaction();
+      // Broadcast market update
+      io.emit('marketTick', updates);
+    } catch (e) {
+      console.error('Tick transaction failed', e);
+    }
   }, 2000);
 
   // 5. Vite Middleware for Development / Static serving for Production
