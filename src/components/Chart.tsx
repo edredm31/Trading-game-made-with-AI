@@ -16,39 +16,47 @@ export default function Chart() {
     const handleResize = () => {
       if (chartRef.current && chartContainerRef.current) {
         chartRef.current.applyOptions({ 
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight
+          width: chartContainerRef.current.clientWidth || 400,
+          height: chartContainerRef.current.clientHeight || 300
         });
       }
     };
 
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: '#111827' }, // Tailwind gray-900
-        textColor: '#9CA3AF', // Tailwind gray-400
-      },
-      grid: {
-        vertLines: { color: '#1F2937' }, // Tailwind gray-800
-        horzLines: { color: '#1F2937' },
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientHeight,
-      timeScale: {
-        timeVisible: true,
-        secondsVisible: false,
-      },
-    });
+    let chart: IChartApi;
+    let candlestickSeries: ISeriesApi<"Candlestick">;
 
-    const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#10B981', // Tailwind emerald-500
-      downColor: '#EF4444', // Tailwind red-500
-      borderVisible: false,
-      wickUpColor: '#10B981',
-      wickDownColor: '#EF4444',
-    });
+    try {
+      chart = createChart(chartContainerRef.current, {
+        layout: {
+          background: { type: ColorType.Solid, color: '#111827' }, // Tailwind gray-900
+          textColor: '#9CA3AF', // Tailwind gray-400
+        },
+        grid: {
+          vertLines: { color: '#1F2937' }, // Tailwind gray-800
+          horzLines: { color: '#1F2937' },
+        },
+        width: chartContainerRef.current.clientWidth || 400,
+        height: chartContainerRef.current.clientHeight || 300,
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
 
-    chartRef.current = chart;
-    seriesRef.current = candlestickSeries;
+      candlestickSeries = chart.addSeries(CandlestickSeries, {
+        upColor: '#10B981', // Tailwind emerald-500
+        downColor: '#EF4444', // Tailwind red-500
+        borderVisible: false,
+        wickUpColor: '#10B981',
+        wickDownColor: '#EF4444',
+      });
+
+      chartRef.current = chart;
+      seriesRef.current = candlestickSeries;
+    } catch (e) {
+      console.error("Error creating chart:", e);
+      return;
+    }
 
     window.addEventListener('resize', handleResize);
 
@@ -60,21 +68,32 @@ export default function Chart() {
 
   // Update data when company changes or history updates
   useEffect(() => {
-    if (!seriesRef.current || !company) return;
+    if (!seriesRef.current || !company || !company.history) return;
     
     // Sort history by time just in case
     const sortedHistory = [...company.history].sort((a, b) => a.time - b.time);
     
-    // Convert to lightweight-charts format
-    const chartData = sortedHistory.map(candle => ({
-      time: candle.time as any,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-    }));
+    // Convert to lightweight-charts format and deduplicate by time
+    const uniqueTimes = new Set();
+    const chartData = sortedHistory.reduce((acc, candle) => {
+      if (!uniqueTimes.has(candle.time)) {
+        uniqueTimes.add(candle.time);
+        acc.push({
+          time: candle.time as any,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+        });
+      }
+      return acc;
+    }, [] as any[]);
 
-    seriesRef.current.setData(chartData);
+    try {
+      seriesRef.current.setData(chartData);
+    } catch (e) {
+      console.error("Error setting chart data:", e);
+    }
   }, [company?.history, company?.id]);
 
   if (!company) {
@@ -90,10 +109,10 @@ export default function Chart() {
         </div>
         <div className="text-right">
           <div className="text-2xl font-mono font-bold text-white">
-            ${company.price.toFixed(2)}
+            ${(company.price || 0).toFixed(2)}
           </div>
-          <div className={`text-sm font-medium ${company.trend >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-            {company.trend >= 0 ? '+' : ''}{(company.trend * 100).toFixed(2)}% Trend
+          <div className={`text-sm font-medium ${(company.trend || 0) >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+            {(company.trend || 0) >= 0 ? '+' : ''}{((company.trend || 0) * 100).toFixed(2)}% Trend
           </div>
         </div>
       </div>

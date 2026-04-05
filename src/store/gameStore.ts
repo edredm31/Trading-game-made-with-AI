@@ -74,7 +74,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         updates.forEach(update => {
           if (newCompanies[update.id]) {
             const company = newCompanies[update.id];
-            const history = [...company.history];
+            const history = [...(company.history || [])];
             
             if (update.candle) {
               const lastCandle = history[history.length - 1];

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Component, ErrorInfo, ReactNode } from 'react';
 import { useGameStore } from './store/gameStore';
 import { formatCurrency } from './lib/utils';
 import MarketList from './components/MarketList';
@@ -13,6 +13,42 @@ import Portfolio from './components/Portfolio';
 import CreateCompanyModal from './components/CreateCompanyModal';
 import LeaderboardModal from './components/LeaderboardModal';
 import { PlusCircle, Trophy, User, LogIn, LogOut } from 'lucide-react';
+
+class ErrorBoundary extends Component<{children: ReactNode}, {hasError: boolean, error: Error | null}> {
+  constructor(props: {children: ReactNode}) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-black text-red-500 flex flex-col items-center justify-center p-4">
+          <h1 className="text-2xl font-bold mb-4">Something went wrong.</h1>
+          <pre className="bg-gray-900 p-4 rounded text-sm overflow-auto max-w-full">
+            {this.state.error?.toString()}
+          </pre>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-500"
+          >
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const initSocket = useGameStore(state => state.initSocket);
@@ -72,82 +108,84 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex flex-col font-sans overflow-hidden h-screen">
-      {/* Top Navbar */}
-      <header className="h-14 bg-gray-950 border-b border-gray-800 flex items-center justify-between px-6 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center font-bold text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]">
-            SE
-          </div>
-          <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
-            Stock Empire
-          </h1>
-        </div>
-
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-4 bg-gray-900 px-4 py-1.5 rounded-full border border-gray-800">
-            <div className="flex items-center gap-2">
-              <span className="text-gray-500 text-sm">Net Worth</span>
-              <span className="font-mono font-bold text-emerald-400">{formatCurrency(user.netWorth)}</span>
+    <ErrorBoundary>
+      <div className="min-h-screen bg-black text-gray-100 flex flex-col font-sans overflow-hidden h-screen">
+        {/* Top Navbar */}
+        <header className="h-14 bg-gray-950 border-b border-gray-800 flex items-center justify-between px-6 shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center font-bold text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]">
+              SE
             </div>
+            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">
+              Stock Empire
+            </h1>
           </div>
 
-          <button 
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-white transition-colors bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-md"
-          >
-            <PlusCircle className="w-4 h-4" />
-            New Company
-          </button>
-          
-          <button 
-            onClick={() => setShowLeaderboard(true)}
-            className="flex items-center gap-2 text-gray-400 hover:text-white cursor-pointer transition-colors"
-          >
-            <Trophy className="w-5 h-5" />
-          </button>
-          
-          <div className="flex items-center gap-2 text-gray-400 hover:text-white cursor-pointer transition-colors">
-            <span className="text-sm font-medium">{user.username}</span>
-            <User className="w-5 h-5" />
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-4 bg-gray-900 px-4 py-1.5 rounded-full border border-gray-800">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 text-sm">Net Worth</span>
+                <span className="font-mono font-bold text-emerald-400">{formatCurrency(user.netWorth || 0)}</span>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-white transition-colors bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-md"
+            >
+              <PlusCircle className="w-4 h-4" />
+              New Company
+            </button>
+            
+            <button 
+              onClick={() => setShowLeaderboard(true)}
+              className="flex items-center gap-2 text-gray-400 hover:text-white cursor-pointer transition-colors"
+            >
+              <Trophy className="w-5 h-5" />
+            </button>
+            
+            <div className="flex items-center gap-2 text-gray-400 hover:text-white cursor-pointer transition-colors">
+              <span className="text-sm font-medium">{user.username}</span>
+              <User className="w-5 h-5" />
+            </div>
+
+            <a href="/api/auth/logout" className="flex items-center gap-2 text-red-400 hover:text-red-300 cursor-pointer transition-colors">
+              <LogOut className="w-5 h-5" />
+            </a>
+          </div>
+        </header>
+
+        {/* Main Content */}
+        <main className="flex-1 flex overflow-hidden">
+          {/* Left Panel - Market List */}
+          <div className="w-80 shrink-0 flex flex-col">
+            <MarketList />
           </div>
 
-          <a href="/api/auth/logout" className="flex items-center gap-2 text-red-400 hover:text-red-300 cursor-pointer transition-colors">
-            <LogOut className="w-5 h-5" />
-          </a>
-        </div>
-      </header>
+          {/* Center Panel - Chart */}
+          <div className="flex-1 flex flex-col min-w-0 p-4">
+            <Chart />
+          </div>
 
-      {/* Main Content */}
-      <main className="flex-1 flex overflow-hidden">
-        {/* Left Panel - Market List */}
-        <div className="w-80 shrink-0 flex flex-col">
-          <MarketList />
-        </div>
+          {/* Right Panel - Trade */}
+          <div className="w-80 shrink-0 flex flex-col">
+            <TradePanel />
+          </div>
+        </main>
 
-        {/* Center Panel - Chart */}
-        <div className="flex-1 flex flex-col min-w-0 p-4">
-          <Chart />
-        </div>
+        {/* Bottom Panel - Portfolio */}
+        <footer className="h-48 shrink-0">
+          <Portfolio />
+        </footer>
 
-        {/* Right Panel - Trade */}
-        <div className="w-80 shrink-0 flex flex-col">
-          <TradePanel />
-        </div>
-      </main>
+        {showCreateModal && (
+          <CreateCompanyModal onClose={() => setShowCreateModal(false)} />
+        )}
 
-      {/* Bottom Panel - Portfolio */}
-      <footer className="h-48 shrink-0">
-        <Portfolio />
-      </footer>
-
-      {showCreateModal && (
-        <CreateCompanyModal onClose={() => setShowCreateModal(false)} />
-      )}
-
-      {showLeaderboard && (
-        <LeaderboardModal onClose={() => setShowLeaderboard(false)} />
-      )}
-    </div>
+        {showLeaderboard && (
+          <LeaderboardModal onClose={() => setShowLeaderboard(false)} />
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }

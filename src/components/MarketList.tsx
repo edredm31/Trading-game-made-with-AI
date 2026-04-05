@@ -19,7 +19,7 @@ export default function MarketList() {
       <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
         {companies.map(company => {
           const isSelected = company.id === selectedCompanyId;
-          const isPositive = company.trend >= 0;
+          const isPositive = (company.trend || 0) >= 0;
           
           return (
             <button
@@ -36,10 +36,10 @@ export default function MarketList() {
                 <div className="text-xs text-gray-400">{formatNumber(company.totalShares)} shares</div>
               </div>
               <div className="text-right">
-                <div className="font-mono text-sm text-white">{formatCurrency(company.price)}</div>
+                <div className="font-mono text-sm text-white">{formatCurrency(company.price || 0)}</div>
                 <div className={`text-xs flex items-center justify-end gap-1 ${isPositive ? 'text-emerald-500' : 'text-red-500'}`}>
                   {isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                  {Math.abs(company.trend * 100).toFixed(1)}%
+                  {Math.abs((company.trend || 0) * 100).toFixed(1)}%
                 </div>
               </div>
             </button>

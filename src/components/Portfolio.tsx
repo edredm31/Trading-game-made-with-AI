@@ -28,10 +28,10 @@ export default function Portfolio() {
           const company = companies[item.companyId];
           if (!company) return null;
 
-          const currentValue = item.shares * company.price;
-          const totalCost = item.shares * item.averagePrice;
+          const currentValue = item.shares * (company.price || 0);
+          const totalCost = item.shares * (item.averagePrice || 0);
           const profit = currentValue - totalCost;
-          const profitPercent = (profit / totalCost) * 100;
+          const profitPercent = totalCost > 0 ? (profit / totalCost) * 100 : 0;
           const isPositive = profit >= 0;
 
           return (

@@ -12,12 +12,12 @@ export default function TradePanel() {
   const buyStock = useGameStore(state => state.buyStock);
   const sellStock = useGameStore(state => state.sellStock);
 
-  if (!company) {
+  if (!company || !user) {
     return <div className="p-4 text-gray-500">Select a company to trade</div>;
   }
 
   const numAmount = parseInt(amount) || 0;
-  const totalCost = numAmount * company.price;
+  const totalCost = numAmount * (company.price || 0);
   const canBuy = user.balance >= totalCost && numAmount > 0;
   const canSell = portfolioItem && portfolioItem.shares >= numAmount && numAmount > 0;
 
@@ -41,7 +41,7 @@ export default function TradePanel() {
           <span className="text-gray-400 flex items-center gap-2">
             <Wallet className="w-4 h-4" /> Balance
           </span>
-          <span className="font-mono text-white font-medium">{formatCurrency(user.balance)}</span>
+          <span className="font-mono text-white font-medium">{formatCurrency(user.balance || 0)}</span>
         </div>
       </div>
 
@@ -60,7 +60,7 @@ export default function TradePanel() {
         <div className="bg-gray-950 p-4 rounded-lg border border-gray-800 space-y-2">
           <div className="flex justify-between text-sm">
             <span className="text-gray-400">Price per share</span>
-            <span className="text-white font-mono">{formatCurrency(company.price)}</span>
+            <span className="text-white font-mono">{formatCurrency(company.price || 0)}</span>
           </div>
           <div className="flex justify-between text-sm font-bold border-t border-gray-800 pt-2 mt-2">
             <span className="text-gray-300">Total Value</span>
@@ -100,8 +100,8 @@ export default function TradePanel() {
               <span className="text-white font-bold">{portfolioItem.shares} Shares</span>
               <div className="text-right">
                 <div className="text-sm text-gray-400">Avg: {formatCurrency(portfolioItem.averagePrice)}</div>
-                <div className={`text-sm font-bold ${company.price >= portfolioItem.averagePrice ? 'text-emerald-500' : 'text-red-500'}`}>
-                  {formatCurrency((company.price - portfolioItem.averagePrice) * portfolioItem.shares)}
+                <div className={`text-sm font-bold ${(company.price || 0) >= (portfolioItem.averagePrice || 0) ? 'text-emerald-500' : 'text-red-500'}`}>
+                  {formatCurrency(((company.price || 0) - (portfolioItem.averagePrice || 0)) * portfolioItem.shares)}
                 </div>
               </div>
             </div>
