@@ -12,7 +12,8 @@ import TradePanel from './components/TradePanel';
 import Portfolio from './components/Portfolio';
 import CreateCompanyModal from './components/CreateCompanyModal';
 import LeaderboardModal from './components/LeaderboardModal';
-import { PlusCircle, Trophy, User, LogIn, LogOut } from 'lucide-react';
+import PlayerMarketplaceModal from './components/PlayerMarketplaceModal';
+import { PlusCircle, Trophy, User, LogIn, LogOut, Users } from 'lucide-react';
 
 class ErrorBoundary extends Component<{children: ReactNode}, {hasError: boolean, error: Error | null}> {
   constructor(props: {children: ReactNode}) {
@@ -56,6 +57,7 @@ export default function App() {
   const user = useGameStore(state => state.user);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showMarketplace, setShowMarketplace] = useState(false);
   const [loadingAuth, setLoadingAuth] = useState(true);
 
   useEffect(() => {
@@ -130,6 +132,14 @@ export default function App() {
             </div>
 
             <button 
+              onClick={() => setShowMarketplace(true)}
+              className="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-white transition-colors bg-purple-900/50 hover:bg-purple-800/50 border border-purple-800/50 px-3 py-1.5 rounded-md"
+            >
+              <Users className="w-4 h-4" />
+              Marketplace
+            </button>
+
+            <button 
               onClick={() => setShowCreateModal(true)}
               className="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-white transition-colors bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-md"
             >
@@ -184,6 +194,10 @@ export default function App() {
 
         {showLeaderboard && (
           <LeaderboardModal onClose={() => setShowLeaderboard(false)} />
+        )}
+
+        {showMarketplace && (
+          <PlayerMarketplaceModal onClose={() => setShowMarketplace(false)} />
         )}
       </div>
     </ErrorBoundary>

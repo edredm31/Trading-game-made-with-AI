@@ -11,6 +11,7 @@ export interface Candle {
 
 export interface Company {
   id: string;
+  ownerId?: string;
   name: string;
   category: string;
   description: string;
@@ -26,6 +27,17 @@ export interface PortfolioItem {
   averagePrice: number;
 }
 
+export interface Order {
+  id: string;
+  company_id: string;
+  action: 'buy' | 'sell';
+  order_type: 'limit' | 'stop_loss';
+  amount: number;
+  target_price: number;
+  status: string;
+  created_at: number;
+}
+
 export interface GameState {
   socket: Socket | null;
   user: {
@@ -35,6 +47,7 @@ export interface GameState {
     netWorth: number;
   } | null;
   portfolio: Record<string, PortfolioItem>;
+  orders: Order[];
   companies: Record<string, Company>;
   selectedCompanyId: string | null;
   
@@ -44,6 +57,8 @@ export interface GameState {
   selectCompany: (id: string) => void;
   buyStock: (companyId: string, amount: number) => void;
   sellStock: (companyId: string, amount: number) => void;
+  placeOrder: (companyId: string, action: 'buy' | 'sell', orderType: 'limit' | 'stop_loss', amount: number, targetPrice: number) => void;
+  cancelOrder: (orderId: string) => void;
   createCompany: (company: Omit<Company, 'id' | 'history' | 'trend'>) => void;
 }
 
@@ -51,6 +66,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   socket: null,
   user: null, // Will be set after auth
   portfolio: {},
+  orders: [],
   companies: {},
   selectedCompanyId: '1',
 
@@ -111,7 +127,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       });
     });
 
-    socket.on('userUpdated', ({ user, portfolio }) => {
+    socket.on('userUpdated', ({ user, portfolio, orders }) => {
+      // Only update if it's for the current user
+      if (get().user?.id && user.id !== get().user?.id) return;
+
       const portfolioMap: Record<string, PortfolioItem> = {};
       portfolio.forEach((p: any) => {
         portfolioMap[p.company_id] = {
@@ -127,7 +146,8 @@ export const useGameStore = create<GameState>((set, get) => ({
           balance: user.balance,
           netWorth: user.net_worth
         }, 
-        portfolio: portfolioMap 
+        portfolio: portfolioMap,
+        orders: orders || []
       });
     });
 
@@ -153,8 +173,13 @@ export const useGameStore = create<GameState>((set, get) => ({
           netWorth: user.net_worth || user.netWorth 
         } 
       });
+      // Fetch user data including orders
+      const socket = get().socket;
+      if (socket) {
+        socket.emit('fetchUserData', user.id);
+      }
     } else {
-      set({ user: null });
+      set({ user: null, portfolio: {}, orders: [] });
     }
   },
 
@@ -171,6 +196,20 @@ export const useGameStore = create<GameState>((set, get) => ({
     const { socket, user } = get();
     if (socket && user) {
       socket.emit('sellStock', { userId: user.id, companyId, amount });
+    }
+  },
+
+  placeOrder: (companyId, action, orderType, amount, targetPrice) => {
+    const { socket, user } = get();
+    if (socket && user) {
+      socket.emit('placeOrder', { userId: user.id, companyId, action, orderType, amount, targetPrice });
+    }
+  },
+
+  cancelOrder: (orderId) => {
+    const { socket, user } = get();
+    if (socket && user) {
+      socket.emit('cancelOrder', { userId: user.id, orderId });
     }
   },
 

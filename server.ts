@@ -64,6 +64,20 @@ async function startServer() {
       close REAL,
       FOREIGN KEY(company_id) REFERENCES companies(id)
     );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      company_id TEXT,
+      action TEXT,
+      order_type TEXT,
+      amount INTEGER,
+      target_price REAL,
+      status TEXT DEFAULT 'pending',
+      created_at INTEGER,
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(company_id) REFERENCES companies(id)
+    );
   `);
 
   // Initialize some default companies if empty
@@ -194,12 +208,23 @@ async function startServer() {
     for (const c of companies) {
       formattedCompanies[c.id] = {
         ...c,
+        ownerId: c.owner_id,
         totalShares: c.total_shares,
         history: historyData.filter(h => h.company_id === c.id)
       };
     }
     
     socket.emit('initialState', { companies: formattedCompanies });
+
+    // Send user's orders if they are authenticated (wait, we don't know who they are until they do something, or we can send it when they authenticate)
+    // Actually, the frontend sends a request or we can just send it when they login.
+    // Let's add an event to fetch user data including orders.
+    socket.on('fetchUserData', (userId) => {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+      const portfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?').all(userId);
+      const orders = db.prepare('SELECT * FROM orders WHERE user_id = ? AND status = ?').all(userId, 'pending');
+      socket.emit('userUpdated', { user, portfolio, orders });
+    });
 
     socket.on('buyStock', ({ userId, companyId, amount }) => {
       const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
@@ -229,7 +254,8 @@ async function startServer() {
           transaction();
           const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
           const updatedPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?').all(userId);
-          socket.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio });
+          const updatedOrders = db.prepare('SELECT * FROM orders WHERE user_id = ? AND status = ?').all(userId, 'pending');
+          socket.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio, orders: updatedOrders });
         } catch (e) {
           console.error('Buy transaction failed', e);
         }
@@ -260,9 +286,54 @@ async function startServer() {
         transaction();
         const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
         const updatedPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?').all(userId);
-        socket.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio });
+        const updatedOrders = db.prepare('SELECT * FROM orders WHERE user_id = ? AND status = ?').all(userId, 'pending');
+        socket.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio, orders: updatedOrders });
       } catch (e) {
         console.error('Sell transaction failed', e);
+      }
+    });
+
+    socket.on('placeOrder', ({ userId, companyId, action, orderType, amount, targetPrice }) => {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
+      const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(companyId) as any;
+      
+      if (!user || !company || amount <= 0 || targetPrice <= 0) return;
+
+      // Basic validation
+      if (action === 'sell') {
+        const portfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ? AND company_id = ?').get(userId, companyId) as any;
+        if (!portfolio || portfolio.shares < amount) return; // Not enough shares to sell
+      } else if (action === 'buy') {
+        if (user.balance < targetPrice * amount) return; // Not enough balance
+      }
+
+      const orderId = Math.random().toString(36).substr(2, 9);
+      const now = Math.floor(Date.now() / 1000);
+
+      try {
+        db.prepare(
+          'INSERT INTO orders (id, user_id, company_id, action, order_type, amount, target_price, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(orderId, userId, companyId, action, orderType, amount, targetPrice, 'pending', now);
+
+        const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+        const updatedPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?').all(userId);
+        const updatedOrders = db.prepare('SELECT * FROM orders WHERE user_id = ? AND status = ?').all(userId, 'pending');
+        socket.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio, orders: updatedOrders });
+      } catch (e) {
+        console.error('Place order failed', e);
+      }
+    });
+
+    socket.on('cancelOrder', ({ userId, orderId }) => {
+      try {
+        db.prepare('UPDATE orders SET status = ? WHERE id = ? AND user_id = ?').run('cancelled', orderId, userId);
+        
+        const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+        const updatedPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?').all(userId);
+        const updatedOrders = db.prepare('SELECT * FROM orders WHERE user_id = ? AND status = ?').all(userId, 'pending');
+        socket.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio, orders: updatedOrders });
+      } catch (e) {
+        console.error('Cancel order failed', e);
       }
     });
 
@@ -285,7 +356,7 @@ async function startServer() {
         transaction();
         const newCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(id) as any;
         const history = db.prepare('SELECT * FROM history WHERE company_id = ?').all(id);
-        io.emit('companyCreated', { ...newCompany, totalShares: newCompany.total_shares, history });
+        io.emit('companyCreated', { ...newCompany, ownerId: newCompany.owner_id, totalShares: newCompany.total_shares, history });
       } catch (e) {
         console.error('Create company failed', e);
       }
@@ -342,6 +413,69 @@ async function startServer() {
         });
       }
 
+      // Process pending orders
+      const pendingOrders = db.prepare('SELECT * FROM orders WHERE status = ?').all('pending') as any[];
+      const usersToUpdate = new Set<string>();
+
+      for (const order of pendingOrders) {
+        const comp = updates.find(u => u.id === order.company_id);
+        if (!comp) continue;
+
+        let shouldExecute = false;
+        if (order.action === 'buy' && order.order_type === 'limit' && comp.price <= order.target_price) {
+          shouldExecute = true;
+        } else if (order.action === 'sell' && order.order_type === 'limit' && comp.price >= order.target_price) {
+          shouldExecute = true;
+        } else if (order.action === 'sell' && order.order_type === 'stop_loss' && comp.price <= order.target_price) {
+          shouldExecute = true;
+        }
+
+        if (shouldExecute) {
+          const user = db.prepare('SELECT * FROM users WHERE id = ?').get(order.user_id) as any;
+          if (!user) continue;
+
+          const cost = comp.price * order.amount;
+          const portfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ? AND company_id = ?').get(order.user_id, order.company_id) as any;
+
+          if (order.action === 'buy') {
+            if (user.balance >= cost) {
+              db.prepare('UPDATE users SET balance = balance - ? WHERE id = ?').run(cost, user.id);
+              if (portfolio) {
+                const newShares = portfolio.shares + order.amount;
+                const newAvgPrice = ((portfolio.shares * portfolio.average_price) + cost) / newShares;
+                db.prepare('UPDATE portfolio SET shares = ?, average_price = ? WHERE user_id = ? AND company_id = ?')
+                  .run(newShares, newAvgPrice, user.id, order.company_id);
+              } else {
+                db.prepare('INSERT INTO portfolio (user_id, company_id, shares, average_price) VALUES (?, ?, ?, ?)')
+                  .run(user.id, order.company_id, order.amount, comp.price);
+              }
+              db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('completed', order.id);
+              usersToUpdate.add(user.id);
+            } else {
+              // Cancel if insufficient funds
+              db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('cancelled', order.id);
+              usersToUpdate.add(user.id);
+            }
+          } else if (order.action === 'sell') {
+            if (portfolio && portfolio.shares >= order.amount) {
+              db.prepare('UPDATE users SET balance = balance + ? WHERE id = ?').run(cost, user.id);
+              const newShares = portfolio.shares - order.amount;
+              if (newShares === 0) {
+                db.prepare('DELETE FROM portfolio WHERE user_id = ? AND company_id = ?').run(user.id, order.company_id);
+              } else {
+                db.prepare('UPDATE portfolio SET shares = ? WHERE user_id = ? AND company_id = ?').run(newShares, user.id, order.company_id);
+              }
+              db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('completed', order.id);
+              usersToUpdate.add(user.id);
+            } else {
+              // Cancel if insufficient shares
+              db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('cancelled', order.id);
+              usersToUpdate.add(user.id);
+            }
+          }
+        }
+      }
+
       // Update net worth for all users
       const users = db.prepare('SELECT * FROM users').all() as any[];
       const getPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?');
@@ -351,19 +485,31 @@ async function startServer() {
         const portfolio = getPortfolio.all(user.id) as any[];
         let totalPortfolioValue = 0;
         for (const item of portfolio) {
-          const comp = updates.find(u => u.id === item.company_id);
+          const comp = updates.find(u => u.id === item.company_id) || companies.find(c => c.id === item.company_id);
           if (comp) {
             totalPortfolioValue += item.shares * comp.price;
           }
         }
         updateUserNetWorth.run(user.balance + totalPortfolioValue, user.id);
       }
+
+      return Array.from(usersToUpdate);
     });
 
     try {
-      tickTransaction();
+      const updatedUserIds = tickTransaction();
       // Broadcast market update
       io.emit('marketTick', updates);
+
+      // Send updates to users whose orders executed
+      for (const userId of updatedUserIds) {
+        const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+        const updatedPortfolio = db.prepare('SELECT * FROM portfolio WHERE user_id = ?').all(userId);
+        const updatedOrders = db.prepare('SELECT * FROM orders WHERE user_id = ? AND status = ?').all(userId, 'pending');
+        // We can't easily emit to a specific user unless we track socket IDs per user.
+        // For now, we broadcast the user update and the client filters it.
+        io.emit('userUpdated', { user: updatedUser, portfolio: updatedPortfolio, orders: updatedOrders });
+      }
     } catch (e) {
       console.error('Tick transaction failed', e);
     }
