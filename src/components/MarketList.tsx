@@ -3,7 +3,8 @@ import { formatCurrency, formatNumber } from '../lib/utils';
 import { TrendingUp, TrendingDown, Building2 } from 'lucide-react';
 
 export default function MarketList() {
-  const companies = useGameStore(state => Object.values(state.companies));
+  const companiesMap = useGameStore(state => state.companies);
+  const companies = Object.values(companiesMap);
   const selectedCompanyId = useGameStore(state => state.selectedCompanyId);
   const selectCompany = useGameStore(state => state.selectCompany);
 
