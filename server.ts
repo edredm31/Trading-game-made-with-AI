@@ -194,6 +194,7 @@ async function startServer() {
     for (const c of companies) {
       formattedCompanies[c.id] = {
         ...c,
+        totalShares: c.total_shares,
         history: historyData.filter(h => h.company_id === c.id)
       };
     }
@@ -282,9 +283,9 @@ async function startServer() {
 
       try {
         transaction();
-        const newCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(id);
+        const newCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(id) as any;
         const history = db.prepare('SELECT * FROM history WHERE company_id = ?').all(id);
-        io.emit('companyCreated', { ...newCompany, history });
+        io.emit('companyCreated', { ...newCompany, totalShares: newCompany.total_shares, history });
       } catch (e) {
         console.error('Create company failed', e);
       }

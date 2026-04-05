@@ -22,6 +22,12 @@ export default function Chart() {
       }
     };
 
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize();
+    });
+
+    resizeObserver.observe(chartContainerRef.current);
+
     let chart: IChartApi;
     let candlestickSeries: ISeriesApi<"Candlestick">;
 
@@ -62,6 +68,7 @@ export default function Chart() {
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       chart.remove();
     };
   }, []);
@@ -116,7 +123,7 @@ export default function Chart() {
           </div>
         </div>
       </div>
-      <div ref={chartContainerRef} className="flex-1 w-full" />
+      <div ref={chartContainerRef} className="flex-1 w-full relative" />
     </div>
   );
 }
