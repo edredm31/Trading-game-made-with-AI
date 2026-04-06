@@ -4,13 +4,9 @@ import { formatCurrency, formatNumber } from '../lib/utils';
 import { X, Users, TrendingUp, TrendingDown } from 'lucide-react';
 
 export default function PlayerMarketplaceModal({ onClose }: { onClose: () => void }) {
-  const companies = useGameStore(state => Object.values(state.companies));
+  const companiesMap = useGameStore(state => state.companies);
+  const companies = Object.values(companiesMap);
   const selectCompany = useGameStore(state => state.selectCompany);
-  
-  // Filter for player-created companies (those with an owner_id, assuming system companies don't have one or have a specific ID)
-  // Since we don't have owner_id in the frontend Company interface yet, let's add it or infer it.
-  // Wait, does the frontend Company interface have owner_id? Let's check gameStore.ts.
-  // It doesn't. Let's update gameStore.ts to include ownerId.
   
   const playerCompanies = companies.filter(c => c.ownerId);
 

@@ -14,7 +14,8 @@ export default function TradePanel() {
   const company = useGameStore(state => selectedCompanyId ? state.companies[selectedCompanyId] : null);
   const user = useGameStore(state => state.user);
   const portfolioItem = useGameStore(state => selectedCompanyId ? state.portfolio[selectedCompanyId] : null);
-  const orders = useGameStore(state => state.orders.filter(o => o.company_id === selectedCompanyId));
+  const allOrders = useGameStore(state => state.orders);
+  const orders = allOrders.filter(o => o.company_id === selectedCompanyId);
   
   const buyStock = useGameStore(state => state.buyStock);
   const sellStock = useGameStore(state => state.sellStock);
